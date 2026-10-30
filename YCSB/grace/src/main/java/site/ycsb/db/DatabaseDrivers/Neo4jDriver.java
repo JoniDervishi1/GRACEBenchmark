@@ -24,39 +24,52 @@ public class Neo4jDriver implements DatabaseClient {
 
   @Override
   public boolean getVertexCount() {
+      try {
+          session.run("SHOW STORAGE INFO ON CURRENT DATABASE")
+              .list(record -> record.get("storage info").asString().equals("vertex_count")
+                  ? record.get("value").asLong()
+                  : -1L)
+              .stream()
+              .filter(count -> count >= 0)
+              .findFirst()
+              .orElseThrow(() -> new RuntimeException("vertex_count not found"));
 
-    try{
-      session.run("MATCH (n) RETURN count(n)");
-      return true;
-    }
-    catch (Exception e){
-      System.out.println("Exception in getVertexCount: " + e.getMessage());
-      return false;
-    }
+          return true;
+      } catch (Exception e) {
+          System.out.println("Exception in getVertexCount: " + e.getMessage());
+          return false;
+      }
   }
+
 
   @Override
   public boolean getEdgeCount() {
-    try{
-      session.run("MATCH ()-[r]->() RETURN count(r)");
-      return true;
-    }
-    catch (Exception e){
-      System.out.println("Exception in getEdgeCount: " + e.getMessage());
-      return false;
-    }
+      try {
+          session.run("SHOW STORAGE INFO ON CURRENT DATABASE")
+              .list(record -> record.get("storage info").asString().equals("edge_count")
+                  ? record.get("value").asLong()
+                  : -1L)
+              .stream()
+              .filter(count -> count >= 0)
+              .findFirst()
+              .orElseThrow(() -> new RuntimeException("edge_count not found"));
+
+          return true;
+      } catch (Exception e) {
+          System.out.println("Exception in getEdgeCount: " + e.getMessage());
+          return false;
+      }
   }
 
   @Override
   public boolean getEdgeLabels() {
-    try{
-      session.run("MATCH ()-[r]->() RETURN DISTINCT type(r)");
-      return true;
-    }
-    catch (Exception e){
-      System.out.println("Exception in getEdgeLabels: " + e.getMessage());
-      return false;
-    }
+      try {
+          session.run("SHOW EDGE_TYPES INFO").consume();
+          return true;
+      } catch (Exception e) {
+          System.out.println("Exception in getEdgeLabels: " + e.getMessage());
+          return false;
+      }
   }
 
   @Override
