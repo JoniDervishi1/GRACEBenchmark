@@ -40,8 +40,8 @@ export class MemGraphDriver extends DatabaseDriver {
     const query = `
       MERGE (n:${labelString} {id: $properties.id})
       SET n = $properties
-      RETURN n
     `;
+//      RETURN n
     const params = { properties: properties };
     try {
       await this.driver.executeQuery(query, params);
@@ -52,10 +52,10 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async deleteVertex(id) {
-    // Fixed: Use parameterized query to prevent injection
-    const query = 'MATCH (n {id: $id}) DETACH DELETE n';
+    // Label is required so Memgraph can use the YCSBVertex(id) index
+    const query = 'MATCH (n:YCSBVertex {id: $id}) DETACH DELETE n';
     const params = { id: id };
-    
+
     try {
       await this.driver.executeQuery(query, params);
     } catch (err) {
@@ -76,13 +76,14 @@ export class MemGraphDriver extends DatabaseDriver {
 
     // MERGE ensures upsert behavior for edges too
     // Note: Using dynamic property names in MERGE requires careful handling
+    // Endpoints carry the YCSBVertex label so the id index is used
     const query = `
-          MATCH (a {${sourcePropName}: $sourcePropValue}), 
-                (b {${targetPropName}: $targetPropValue})
+          MATCH (a:YCSBVertex {${sourcePropName}: $sourcePropValue}),
+                (b:YCSBVertex {${targetPropName}: $targetPropValue})
           MERGE (a)-[r:${relationLabelString} {id: $properties.id}]->(b)
           SET r = $properties
-          RETURN r
     `;
+//          RETURN r
 
     const params = {
       sourcePropValue: sourcePropValue,
@@ -99,10 +100,10 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async deleteEdge(id: string) {
-    // Fixed: Use parameterized query
-    const query = 'MATCH ()-[r {id: $id}]-() DELETE r';
+    // Typed + directed so the YCSBEdge(id) edge index is used
+    const query = 'MATCH ()-[r:YCSBEdge {id: $id}]->() DELETE r';
     const params = { id: id };
-    
+
     logger.info("Delete edge query: " + query);
     try {
       await this.driver.executeQuery(query, params);
@@ -113,13 +114,12 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async setVertexProperty(vid: string, key: string, value: string) {
-    // Fixed: Use parameterized query and MERGE for idempotency
     // Note: Dynamic property keys still require string interpolation
     const query = `
-      MATCH (n {id: $vid})
+      MATCH (n:YCSBVertex {id: $vid})
       SET n.${key} = $value
-      RETURN n
     `;
+        // RETURN n
     const params = { vid: vid, value: value };
 
     logger.info("Set vertex property query: " + query);
@@ -137,12 +137,11 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async setEdgeProperty(eid: string, key: string, value: string) {
-    // Fixed: Use parameterized query
     const query = `
-      MATCH ()-[r {id: $eid}]->()
+      MATCH ()-[r:YCSBEdge {id: $eid}]->()
       SET r.${key} = $value
-      RETURN r
     `;
+//      RETURN r
     const params = { eid: eid, value: value };
 
     try {
@@ -158,14 +157,13 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async removeVertexProperty(vid: string, key: string) {
-    // Fixed: Use parameterized query
     const query = `
-      MATCH (n {id: $vid})
+      MATCH (n:YCSBVertex {id: $vid})
       REMOVE n.${key}
-      RETURN n
     `;
+//      RETURN n
     const params = { vid: vid };
-    
+
     try {
       const result = await this.driver.executeQuery(query, params);
       if (result.records.length === 0) {
@@ -179,12 +177,11 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async removeEdgeProperty(eid: string, key: string) {
-    // Fixed: Use parameterized query
     const query = `
-      MATCH ()-[r {id: $eid}]->()
+      MATCH ()-[r:YCSBEdge {id: $eid}]->()
       REMOVE r.${key}
-      RETURN r
     `;
+      // RETURN r
     const params = { eid: eid };
 
     try {

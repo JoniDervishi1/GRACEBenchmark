@@ -2,7 +2,7 @@
 
 ROOT_DIRECTORY=$(pwd)
 PRELOAD=false
-DURATION=60 #Benchmark duration in seconds
+DURATION=120 #Benchmark duration in seconds
 echo "Benchmark duration: $DURATION seconds"
 INJECT_FAULTS=false
 echo "Root Directory: $ROOT_DIRECTORY"
@@ -14,12 +14,12 @@ PRELOAD_DATA="$ROOT_DIRECTORY/PreloadData"
 export PRELOAD_DATA="$ROOT_DIRECTORY/PreloadData"
 
 
-JANUSGRAPH_DIRECTORY="$ROOT_DIRECTORY/JanusgraphServer"
-mkdir -p $JANUSGRAPH_DIRECTORY
-cd $JANUSGRAPH_DIRECTORY
-if [ ! -f "./janusgraph-full-1.1.0.zip" ]; then
-    wget -P . https://github.com/JanusGraph/janusgraph/releases/download/v1.1.0/janusgraph-full-1.1.0.zip
-fi
+# JANUSGRAPH_DIRECTORY="$ROOT_DIRECTORY/JanusgraphServer"
+# mkdir -p $JANUSGRAPH_DIRECTORY
+# cd $JANUSGRAPH_DIRECTORY
+# if [ ! -f "./janusgraph-full-1.1.0.zip" ]; then
+#     wget -P . https://github.com/JanusGraph/janusgraph/releases/download/v1.1.0/janusgraph-full-1.1.0.zip
+# fi
 
 
 
@@ -113,7 +113,7 @@ DATABASES=(GRACE MemGraph Neo4j ArangoDB MongoDB JanusGraph)
 
 
 # yeast mico ldbc frbs frbm frbo frbl
-datasets=(frbm)
+datasets=(ldbc)
 # Eventually this set of commands will be in a loop and potentially parallel?
 
 DATA_DIRECTORY="$ROOT_DIRECTORY/GraphDBData"

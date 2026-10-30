@@ -1,7 +1,7 @@
 import * as Y from "yjs";
 import { driver } from "../app";
 import { logger } from "../helpers/logging";
-import { ProfiledPlan } from "neo4j-driver";
+//import { ProfiledPlan } from "neo4j-driver";
 import { PeerAcknowledgmentSystem } from "../helpers/peerAcknowledgment";
 
 export type EdgeInformation = {

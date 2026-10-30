@@ -1,22 +1,22 @@
-if [ ! -f $DATA_DIRECTORY/yeast.json ]; then 
-    curl https://zenodo.org/records/15571202/files/yeast.json?download=1 > $DATA_DIRECTORY/yeast.json
-fi
+# if [ ! -f $DATA_DIRECTORY/yeast.json ]; then 
+#     curl https://zenodo.org/records/15571202/files/yeast.json?download=1 > $DATA_DIRECTORY/yeast.json
+# fi
 
-if [ ! -f $DATA_DIRECTORY/mico.json ]; then 
-    curl https://zenodo.org/records/15571202/files/mico.json?download=1 > $DATA_DIRECTORY/mico.json
-fi
+# if [ ! -f $DATA_DIRECTORY/mico.json ]; then 
+#     curl https://zenodo.org/records/15571202/files/mico.json?download=1 > $DATA_DIRECTORY/mico.json
+# fi
 if [ ! -f $DATA_DIRECTORY/ldbc.json ]; then 
     curl https://zenodo.org/records/15571202/files/ldbc.json?download=1 > $DATA_DIRECTORY/ldbc.json
 fi
-if [ ! -f $DATA_DIRECTORY/frbo.json ]; then 
-    curl https://zenodo.org/records/15571202/files/freebase_org.json?download=1 > $DATA_DIRECTORY/frbo.json
-fi
-if [ ! -f $DATA_DIRECTORY/frbs.json ]; then 
-    curl https://zenodo.org/records/15571202/files/freebase_small.json?download=1 > $DATA_DIRECTORY/frbs.json
-fi
-if [ ! -f $DATA_DIRECTORY/frbm.json ]; then 
-    curl https://zenodo.org/records/15571202/files/freebase_medium.json?download=1 > $DATA_DIRECTORY/frbm.json
-fi
+# if [ ! -f $DATA_DIRECTORY/frbo.json ]; then 
+#     curl https://zenodo.org/records/15571202/files/freebase_org.json?download=1 > $DATA_DIRECTORY/frbo.json
+# fi
+# if [ ! -f $DATA_DIRECTORY/frbs.json ]; then 
+#     curl https://zenodo.org/records/15571202/files/freebase_small.json?download=1 > $DATA_DIRECTORY/frbs.json
+# fi
+# if [ ! -f $DATA_DIRECTORY/frbm.json ]; then 
+#     curl https://zenodo.org/records/15571202/files/freebase_medium.json?download=1 > $DATA_DIRECTORY/frbm.json
+# fi
 
 #if [ ! -f $DATA_DIRECTORY/ldbc0.1.json ]; then 
 #    ./downloadLDBCData.sh https://repository.surfsara.nl/datasets/cwi/ldbc-snb-interactive-v1-datagen-v100/files/social_network-sf0.1-CsvBasic-LongDateFormatter.tar.zst
