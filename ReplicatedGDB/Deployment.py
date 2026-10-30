@@ -136,7 +136,7 @@ def generate_compose_file(dc_idx, replica_idx, dc_conf, config):
 
     
     app_log_level = dc_conf["app_log_level"]
-    ack_level = config.get("ack_level", "none")
+    ack_level = config.get("ack_level", "dc")
     database = dc_conf["database"]
     password = dc_conf["password"]
     db_user = dc_conf["user"]
@@ -226,7 +226,10 @@ def generate_compose_file(dc_idx, replica_idx, dc_conf, config):
         {db_name}:
           image: memgraph/memgraph:latest
           container_name: {db_name}
-          command: ["--log-level=TRACE"]
+          command: [
+            "--log-level=TRACE", 
+            "--storage-enable-schema-metadata=true"
+            ]
           volumes:
             - {PRELOAD_DATA}:/var/lib/memgraph/import
           healthcheck:
