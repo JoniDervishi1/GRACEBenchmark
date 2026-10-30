@@ -283,7 +283,7 @@ export class Vertex_Edge {
     } else {
       await driver.setEdgeProperty(eid, key, value);
       if(!remote && edge){
-        (edge.properties as any).set(key, value);
+        edge.properties[key] = value;
         this.GEdges.set(eid, edge);
         
         // Wait for peer acknowledgment
@@ -339,7 +339,7 @@ export class Vertex_Edge {
     } else {
       await driver.removeEdgeProperty(eid, key);
       if(!remote && edge){
-        (edge.properties as any).delete(key);
+        delete edge.properties[key];
         this.GEdges.set(eid, edge);
         
         // Wait for peer acknowledgment
