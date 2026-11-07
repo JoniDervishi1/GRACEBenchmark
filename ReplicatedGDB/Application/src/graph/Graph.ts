@@ -112,10 +112,9 @@ export class Vertex_Edge {
     remote: boolean
   ) {
     try {
-      // update the database
-      await driver.deleteVertex(id);
-
       const exists = this.GVertices.get(id);
+      // update the database (the labels let Memgraph use its label(id) index)
+      await driver.deleteVertex(id, exists?.labels);
 
       if (!exists && !remote) {
         throw new Error(`Vertex with id "${id}" does not exist`);
@@ -152,10 +151,9 @@ export class Vertex_Edge {
     preload = false
   ) {
     const edgeId = properties.id;
-    if (
-      this.GVertices.get(sourcePropValue) == undefined ||
-      this.GVertices.get(targetPropValue) == undefined
-    ) {
+    const sourceVertex = this.GVertices.get(sourcePropValue);
+    const targetVertex = this.GVertices.get(targetPropValue);
+    if (sourceVertex == undefined || targetVertex == undefined) {
       throw new Error(
         "Source and/or target vertex do not exist. Edge: " +
           sourcePropValue +
@@ -178,7 +176,9 @@ export class Vertex_Edge {
         sourcePropValue,
         targetPropName,
         targetPropValue,
-        properties
+        properties,
+        sourceVertex.labels,
+        targetVertex.labels
       );
     }
 
@@ -220,7 +220,7 @@ export class Vertex_Edge {
     if (edge == undefined && !remote) {
       throw new Error("Edge with this id does not exist");
     } else {
-      await driver.deleteEdge(id);
+      await driver.deleteEdge(id, edge?.relationType);
       if (!remote) {
         if (edge == undefined) {
           throw Error("Undefined Edge");
@@ -252,7 +252,7 @@ export class Vertex_Edge {
     if (vertex == undefined && !remote) {
       throw new Error("Vertex with id " + vid + " does not exist");
     } else {
-      await driver.setVertexProperty(vid, key, value);
+      await driver.setVertexProperty(vid, key, value, vertex?.labels);
       if(!remote && vertex){
         vertex.properties[key]= value;
         this.GVertices.set(vid, vertex);
@@ -281,7 +281,7 @@ export class Vertex_Edge {
     if (edge == undefined && !remote) {
       throw new Error("Edge with id " + eid + " does not exist");
     } else {
-      await driver.setEdgeProperty(eid, key, value);
+      await driver.setEdgeProperty(eid, key, value, edge?.relationType);
       if(!remote && edge){
         edge.properties[key] = value;
         this.GEdges.set(eid, edge);
@@ -309,7 +309,7 @@ export class Vertex_Edge {
     if (vertex == undefined && !remote) {
       throw new Error("Vertex with id " + vid + " does not exist");
     } else {
-      await driver.removeVertexProperty(vid, key);
+      await driver.removeVertexProperty(vid, key, vertex?.labels);
       if(!remote && vertex){
         delete vertex.properties[key];
         this.GVertices.set(vid, vertex);
@@ -337,7 +337,7 @@ export class Vertex_Edge {
     if (edge == undefined && !remote) {
       throw new Error("Edge with id " + eid + " does not exist");
     } else {
-      await driver.removeEdgeProperty(eid, key);
+      await driver.removeEdgeProperty(eid, key, edge?.relationType);
       if(!remote && edge){
         delete edge.properties[key];
         this.GEdges.set(eid, edge);

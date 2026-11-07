@@ -399,10 +399,17 @@ async function onListening() {
         value.id = value._id.toString();
         // logger.info(JSON.stringify(value));
 
+        // The label is the dataset's xlabel. It is the vertex label, not a property, so it is
+        // left out of the properties (same as the Memgraph preload).
+        const { xlabel, ...vertexProperties } = value;
+        if (!xlabel) {
+          logger.error("Preload: vertex " + value.id + " has no xlabel, skipped");
+          return;
+        }
         const vertex: VertexInformation = {
                 id: value.id.toString(),
-                labels: ["YCSBVertex"],
-                properties: value,
+                labels: [String(xlabel)],
+                properties: vertexProperties,
               };
         graph.GVertices.set(value.id,vertex);
       });
@@ -420,6 +427,12 @@ async function onListening() {
 
         edgePipeline.on("data", async ({ value }) => {
           value.id = value._id.toString();
+          // The edge type is the dataset's _label, not a property.
+          const { _label, ...edgeProperties } = value;
+          if (!_label) {
+            logger.error("Preload: edge " + value.id + " has no _label, skipped");
+            return;
+          }
           //adding it the yjs list
               const edge: EdgeInformation = {
                 id: value.id.toString(),
@@ -427,8 +440,8 @@ async function onListening() {
                 sourcePropValue: value._outV.toString(),
                 targetPropName: "id",
                 targetPropValue: value._inV.toString(),
-                properties: value,
-                relationType: ["YCSBEdge"],
+                properties: edgeProperties,
+                relationType: [String(_label)],
               };
             
               graph.GEdges.set(value.id, edge);

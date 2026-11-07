@@ -175,6 +175,7 @@ for dataset in "${datasets[@]}"; do
     LOAD_TIME_DIRECTORY="$ROOT_DIRECTORY/LoadTimes/ReplicaCountAndLatency/$DATASET_NAME"
     cp $DATA_DIRECTORY/${DATASET_NAME}_load_vertices.loaded $YCSB_DIRECTORY/Vertices.loaded
     cp $DATA_DIRECTORY/${DATASET_NAME}_load_edges.loaded $YCSB_DIRECTORY/Edges.loaded
+    cp $DATA_DIRECTORY/${DATASET_NAME}_load_edges.labels.json $YCSB_DIRECTORY/Edges.labels.json
     
     
     cp $DATA_DIRECTORY/${DATASET_NAME}_load_vertices.csv $PRELOAD_DATA/vertices.csv
@@ -183,6 +184,14 @@ for dataset in "${datasets[@]}"; do
     cp $DATA_DIRECTORY/${DATASET_NAME}_load_edges.json $PRELOAD_DATA/edges.json
     cp $DATA_DIRECTORY/${DATASET_NAME}_load_vertices.keys $PRELOAD_DATA/vertices.keys
     cp $DATA_DIRECTORY/${DATASET_NAME}_load_edges.keys $PRELOAD_DATA/edges.keys
+    cp $DATA_DIRECTORY/${DATASET_NAME}_load_vertices.labels.json $PRELOAD_DATA/vertices.labels.json
+    cp $DATA_DIRECTORY/${DATASET_NAME}_load_edges.labels.json $PRELOAD_DATA/edges.labels.json
+    
+ 
+    # Generate preloadMemgraph.cypher in PRELOAD_DATA from the label schemas above.
+    # It reads PRELOAD_DATA/vertices.csv and edges.csv (mounted at /var/lib/memgraph/import).
+    python3 $ROOT_DIRECTORY/scripts/utilities/generatePreloadMemgraph.py --preload-dir $PRELOAD_DATA || exit 1
+
     
     
     # Create results directory if it doesn't exist

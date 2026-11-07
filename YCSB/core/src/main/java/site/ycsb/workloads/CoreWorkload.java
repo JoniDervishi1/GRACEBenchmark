@@ -24,13 +24,13 @@ import site.ycsb.*;
 import site.ycsb.generator.*;
 import site.ycsb.generator.UniformLongGenerator;
 import site.ycsb.measurements.Measurements;
-import sun.security.util.ArrayUtil;
 
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * The core benchmark scenario. Represents a set of clients doing simple CRUD operations. The
@@ -82,6 +82,59 @@ public class CoreWorkload extends Workload {
   public static LinkedList<String> insertedVertices = new LinkedList<>();
   public static LinkedList<String> insertedEdges = new LinkedList<>();
 
+  // Read-only snapshots of the loaded ids (built in init) used to pick a random id per operation.
+  // LinkedList.get(i) is O(n) and getFirst() always hits the same record, so these are ArrayLists.
+  private List<String> loadedVertexIds = new ArrayList<>();
+  private List<String> loadedEdgeIds = new ArrayList<>();
+
+  // Edge types (the dataset's _label values) used by GET_EDGES_WITH_LABEL.
+  private List<String> edgeLabels = new ArrayList<>();
+
+  // Counters for the load phase (so silently failed inserts are visible).
+  private long vertexLoadOk, vertexLoadFailed, edgeLoadOk, edgeLoadFailed;
+
+  private static String randomId(List<String> ids) {
+    if (ids.isEmpty()) {
+      return null;
+    }
+    return ids.get(ThreadLocalRandom.current().nextInt(ids.size()));
+  }
+
+  /**
+   * Reads the edge type names from the "labels" object of Edges.labels.json, which jsontoCSV.py
+   * writes as <dataset>_load_edges.labels.json and RunBenchmark.sh copies into the YCSB directory.
+   */
+  private static List<String> loadEdgeLabels(String path) throws WorkloadException {
+    List<String> labels = new ArrayList<>();
+    File f = new File(path);
+    if (!f.exists()) {
+      throw new WorkloadException("Edge labels file not found: " + f.getAbsolutePath()
+          + " (copy <dataset>_load_edges.labels.json to it; see RunBenchmark.sh)");
+    }
+    try (JsonParser parser = new JsonFactory().createParser(f)) {
+      JsonToken tok;
+      while ((tok = parser.nextToken()) != null) {
+        if (tok == JsonToken.FIELD_NAME && "labels".equals(parser.getCurrentName())) {
+          if (parser.nextToken() != JsonToken.START_OBJECT) {
+            break;
+          }
+          while (parser.nextToken() == JsonToken.FIELD_NAME) {
+            labels.add(parser.getCurrentName());
+            parser.nextToken();
+            parser.skipChildren();
+          }
+          break;
+        }
+      }
+    } catch (IOException e) {
+      throw new WorkloadException("Failed to read " + path + ": " + e.getMessage());
+    }
+    if (labels.isEmpty()) {
+      throw new WorkloadException("No edge labels found in " + path);
+    }
+    return labels;
+  }
+
 
   /**
    * The name of the property for the proportion of transactions that are reads.
@@ -129,7 +182,7 @@ public class CoreWorkload extends Workload {
 
   public void ProcessVertexFile(DB db, Properties props) throws IOException{
     String vertexFile = props.getProperty("loadVertexFile", "UNDEF");
-    if (vertexFile == "UNDEF"){
+    if ("UNDEF".equals(vertexFile)){
       throw new RuntimeException("Vertex file not supplied in parameters");
     }
     System.out.println("Loading vertex data from: "+ vertexFile);
@@ -143,7 +196,7 @@ public class CoreWorkload extends Workload {
 
       while (parser.nextToken() == JsonToken.START_OBJECT) {
         String id = null;
-        String type = null;
+        String label = null;   // the dataset's xlabel
         Map<String, String> properties = new HashMap<>();
 
         while (parser.nextToken() != JsonToken.END_OBJECT) {
@@ -155,8 +208,8 @@ public class CoreWorkload extends Workload {
             case "_id":
               id = value;
               break;
-            case "_type":
-              type = value+"Type";
+            case "xlabel":
+              label = value;
               break;
             default:
               properties.put(fieldName, value);
@@ -164,9 +217,18 @@ public class CoreWorkload extends Workload {
           }
 
         }
+        if (id == null || label == null || label.isEmpty()) {
+          vertexLoadFailed++;
+          continue;
+        }
         properties.put("searchKey", propertyPool.next());
-        appendVertexID(id);
-        db.addVertex(type, id, properties);
+        Status status = db.addVertex(label, id, properties);
+        if (status != null && status.isOk()) {
+          appendVertexID(id);   // only ids that were really added
+          vertexLoadOk++;
+        } else {
+          vertexLoadFailed++;
+        }
 
 //        // --- Progress bar ---
 //        long currentBytes = parser.getCurrentLocation().getByteOffset();
@@ -189,7 +251,7 @@ public class CoreWorkload extends Workload {
 
   public void ProcessEdgeFile(DB db, Properties props) throws IOException{
     String edgeFile = props.getProperty("loadEdgeFile", "UNDEF");
-    if (edgeFile == "UNDEF"){
+    if ("UNDEF".equals(edgeFile)){
       throw new RuntimeException("Edge file not supplied in parameters");
     }
     System.out.println("Loading edge data from: "+ edgeFile);
@@ -203,7 +265,7 @@ public class CoreWorkload extends Workload {
 
       while (parser.nextToken() == JsonToken.START_OBJECT) {
         String id = null;
-        String type = null;
+        String label = null;   // the dataset's _label
         String from = null;
         String to= null;
         Map<String, String> properties = new HashMap<>();
@@ -217,8 +279,8 @@ public class CoreWorkload extends Workload {
             case "_id":
               id = value;
               break;
-            case "_type":
-              type = value+"Type";
+            case "_label":
+              label = value;
               break;
             case "_outV":
               from = value;
@@ -232,9 +294,18 @@ public class CoreWorkload extends Workload {
           }
 
         }
+        if (id == null || label == null || label.isEmpty() || from == null || to == null) {
+          edgeLoadFailed++;
+          continue;
+        }
         properties.put("searchKey", propertyPool.next());
-        appendEdgeID(id);
-        db.addEdge(type, id, from , to, properties);
+        Status status = db.addEdge(label, id, from, to, properties);
+        if (status != null && status.isOk()) {
+          appendEdgeID(id);   // only ids that were really added
+          edgeLoadOk++;
+        } else {
+          edgeLoadFailed++;
+        }
 //
 //        // --- Progress bar ---
 //        long currentBytes = parser.getCurrentLocation().getByteOffset();
@@ -268,7 +339,9 @@ public class CoreWorkload extends Workload {
     System.out.println("Called load data in core workload. Loading data");
     try {
       ProcessVertexFile(db, props);
+      System.out.printf("Vertices: %d added, %d failed or skipped%n", vertexLoadOk, vertexLoadFailed);
       ProcessEdgeFile(db, props);
+      System.out.printf("Edges: %d added, %d failed or skipped%n", edgeLoadOk, edgeLoadFailed);
     } catch (Exception e)
     {
       System.out.println("Error loading data.");
@@ -346,6 +419,10 @@ public class CoreWorkload extends Workload {
     loadedVertices = loadIDs("./Vertices.loaded");
     loadedEdges = loadIDs("./Edges.loaded");
     System.out.printf("Loaded %d vertices and %d edges%n", loadedVertices.size(), loadedEdges.size());
+    loadedVertexIds = new ArrayList<>(loadedVertices);
+    loadedEdgeIds = new ArrayList<>(loadedEdges);
+    edgeLabels = loadEdgeLabels(p.getProperty("edgeLabelsFile", "./Edges.labels.json"));
+    System.out.println("Edge labels: " + edgeLabels);
 
     try{
       if(p.getProperty("vertexAddFile") == null){
@@ -433,9 +510,17 @@ public class CoreWorkload extends Workload {
       Map<String, String> obj = vertexStreamer.nextObject();
       if (obj == null) return; // no more vertices
       String id = obj.remove("_id");
-      String type = "YCSBVertex";
-      insertedVertices.add(id);
-      db.addVertex(type,id, obj);
+      String label = obj.remove("xlabel");
+      if (id == null || label == null) {
+        System.out.println("Update vertex without _id or xlabel, skipped");
+        return;
+      }
+      Status status = db.addVertex(label, id, obj);
+      if (status != null && status.isOk()) {
+        synchronized (insertedVertices) {
+          insertedVertices.add(id);
+        }
+      }
       
     } catch (IOException e){
       System.out.println("Error fetching next vertex from the update workload");
@@ -448,11 +533,19 @@ public class CoreWorkload extends Workload {
       if (obj == null) return; // no more edges
 
       String id = obj.remove("_id");
-      String type = "YCSBEdge";
+      String label = obj.remove("_label");
       String from = obj.remove("_outV");
       String to = obj.remove("_inV");
-      insertedEdges.add(id);
-      db.addEdge(type, id, from, to, obj);
+      if (id == null || label == null || from == null || to == null) {
+        System.out.println("Update edge without _id, _label, _outV or _inV, skipped");
+        return;
+      }
+      Status status = db.addEdge(label, id, from, to, obj);
+      if (status != null && status.isOk()) {
+        synchronized (insertedEdges) {
+          insertedEdges.add(id);
+        }
+      }
     }catch(IOException e){
       System.out.println("Error fetching next edge from the update workload");
     }
@@ -474,45 +567,59 @@ public class CoreWorkload extends Workload {
     db.getEdgeWithProperty("searchKey", propertyPool.next());
   }
   public void doTransactionGetEdgesWithLabel(DB db) {
-    db.getEdgesWithLabel(propertyPool.next());
+    db.getEdgesWithLabel(edgeLabels.get(ThreadLocalRandom.current().nextInt(edgeLabels.size())));
   }
 
   public void doTransactionSetVertexProperty(DB db) {
-    String id = loadedVertices.getFirst();
-
+    String id = randomId(loadedVertexIds);
+    if (id == null) {
+      return;
+    }
     db.setVertexProperty(id, "searchKey", propertyPool.next());
 
   }
   public void doTransactionSetEdgeProperty(DB db) {
-    String id = loadedEdges.getFirst();
-    db.setEdgeProperty(id,"searchKey", propertyPool.next());
+    String id = randomId(loadedEdgeIds);
+    if (id == null) {
+      return;
+    }
+    db.setEdgeProperty(id, "searchKey", propertyPool.next());
 
   }
   public void doTransactionRemoveVertex(DB db) {
-    if(insertedVertices.isEmpty()){
+    String id;
+    synchronized (insertedVertices) {
+      id = insertedVertices.pollFirst();
+    }
+    if (id == null) {
       return;
     }
-    String id = insertedVertices.getFirst();
     db.removeVertex(id);
-    insertedVertices.remove(id);
   }
   public void doTransactionRemoveEdge(DB db) {
-    if(insertedEdges.isEmpty()){
+    String id;
+    synchronized (insertedEdges) {
+      id = insertedEdges.pollFirst();
+    }
+    if (id == null) {
       return;
     }
-
-    String id = insertedEdges.getFirst();
     db.removeEdge(id);
-    insertedEdges.remove(id);
   }
 
   public void doTransactionRemoveVertexProperty(DB db) {
-    String id = loadedVertices.getFirst();
-    db.removeVertexProperty(id,"searchKey");
+    String id = randomId(loadedVertexIds);
+    if (id == null) {
+      return;
+    }
+    db.removeVertexProperty(id, "searchKey");
 
   }
   public void doTransactionRemoveEdgeProperty(DB db) {
-    String id = loadedEdges.getFirst();
+    String id = randomId(loadedEdgeIds);
+    if (id == null) {
+      return;
+    }
     db.removeEdgeProperty(id, "searchKey");
 
   }
