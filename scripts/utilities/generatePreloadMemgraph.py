@@ -41,8 +41,12 @@ import json
 import os
 import sys
 
-PRESERVED_INDEX_KEYS_VERTEX = ["id", "searchKey"]
-PRESERVED_INDEX_KEYS_EDGE = ["id", "_outV", "_inV", "searchKey"]
+PRESERVED_INDEX_KEYS_VERTEX = ["id"]
+PRESERVED_INDEX_KEYS_EDGE = ["id", "_outV", "_inV"]
+# The benchmark's GET_*_WITH_PROPERTY queries look for searchKey without naming a label, so they
+# are served by a label-less (global) property index. Per-label searchKey indexes are only needed
+# if those queries are changed to name a label (--per-label-search-index).
+SEARCH_KEY = "searchKey"
 
 
 def ident(s):
@@ -128,6 +132,9 @@ def main():
     ap.add_argument("--out", default=None, help="default: <preload-dir>/preloadMemgraph.cypher")
     ap.add_argument("--import-dir", default="/var/lib/memgraph/import",
                     help="Where the preload folder is mounted inside the Memgraph container")
+    ap.add_argument("--per-label-search-index", action="store_true",
+                    help="also create a searchKey index on every label / edge type (only useful for "
+                         "label-scoped searchKey queries; doubles the write cost of searchKey updates)")
     ap.add_argument("--vertex-csv", default="vertices.csv")
     ap.add_argument("--edge-csv", default="edges.csv")
     args = ap.parse_args()
@@ -155,14 +162,18 @@ def main():
     w("MATCH (n) DETACH DELETE n;")
     w("")
 
+    v_keys = PRESERVED_INDEX_KEYS_VERTEX + ([SEARCH_KEY] if args.per_label_search_index else [])
+    e_keys = PRESERVED_INDEX_KEYS_EDGE + ([SEARCH_KEY] if args.per_label_search_index else [])
     for label in v_labels:
         w(f"CREATE INDEX ON :{ident(label)};")
-        for k in PRESERVED_INDEX_KEYS_VERTEX:
+        for k in v_keys:
             w(f"CREATE INDEX ON :{ident(label)}({ident(k)});")
     for label in e_labels:
         w(f"CREATE EDGE INDEX ON :{ident(label)};")
-        for k in PRESERVED_INDEX_KEYS_EDGE:
+        for k in e_keys:
             w(f"CREATE EDGE INDEX ON :{ident(label)}({ident(k)});")
+    w(f"CREATE GLOBAL INDEX ON :({ident(SEARCH_KEY)});")
+    w(f"CREATE GLOBAL EDGE INDEX ON :({ident(SEARCH_KEY)});")
     w("")
 
     for label, spec in v_labels.items():
@@ -200,8 +211,9 @@ def main():
 
     text = "\n".join(out).strip() + "\n"
     expected = (1                                                     # clear database
-                + len(v_labels) * (1 + len(PRESERVED_INDEX_KEYS_VERTEX))
-                + len(e_labels) * (1 + len(PRESERVED_INDEX_KEYS_EDGE))
+                + len(v_labels) * (1 + len(v_keys))
+                + len(e_labels) * (1 + len(e_keys))
+                + 2                                                   # global searchKey indexes
                 + len(v_labels) + len(e_labels)                       # LOAD CSV passes
                 + 4)                                                  # verification queries
     stmts, tail = split_statements(text)
