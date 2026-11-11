@@ -2,6 +2,22 @@ import { logger } from "../helpers/logging";
 import { DatabaseDriver } from "./driver";
 import neo4j from "neo4j-driver";
 
+/** Backtick-quotes a label, edge type or property key so it is safe to put in a query. */
+const ident = (s: string) => "`" + String(s).replace(/`/g, "``") + "`";
+
+/** ":`a`:`b`" for vertex labels, "" when the labels are not known. */
+const labelClause = (labels?: string[]) =>
+  labels && labels.length > 0 ? labels.map((l) => ":" + ident(l)).join("") : "";
+
+/** ":`T`" for an edge type, "" when it is not known. A relationship has exactly one type. */
+const typeClause = (types?: string[] | string) => {
+  const t = Array.isArray(types) ? types[0] : types;
+  return t ? ":" + ident(t) : "";
+};
+
+const toNumber = (v: any): number => (neo4j.isInt(v) ? v.toNumber() : Number(v));
+
+
 export class MemGraphDriver extends DatabaseDriver {
   driver;
   constructor() {
@@ -19,20 +35,32 @@ export class MemGraphDriver extends DatabaseDriver {
     })();
   }
 
+    /** Runs a query that ends in "RETURN count(x) AS matched" and returns that number. */
+  private async matched(query: string, params: object): Promise<number> {
+    const result = await this.driver.executeQuery(query, params);
+    const rec = result.records[0];
+    return rec ? toNumber(rec.get("matched")) : 0;
+  }
+
+
   async addVertex(labels, properties): Promise<Boolean> {
     logger.info("Adding vertex");
     try {
       logger.debug(JSON.stringify(labels));
-      const labelString = labels.join(":");
-      // Build and execute Cypher query
-      const query = `CREATE (n:${labelString} $properties) RETURN n`;
+
+      const query = `
+        MERGE (n${labelClause(labels)} {id: $properties.id})
+        SET n = $properties
+      `;
+
       const params = { properties: properties };
       logger.debug("Add vertex query string: " + query);
       const result = await this.driver.executeQuery(query, params);
+
       if (result.records && result.records.length === 0) {
         return Promise.resolve(false);
       }
-      logger.info("Vertex added with labels: " + labelString);
+      //logger.info("Vertex added with labels: " + labelString);
       return Promise.resolve(true);
     } catch (err) {
       logger.error("Error in add vertex: " + err);
@@ -40,12 +68,12 @@ export class MemGraphDriver extends DatabaseDriver {
     }
   }
 
-  async deleteVertex(id): Promise<Boolean> {
+  async deleteVertex(id, labels?: any): Promise<Boolean> {
     try {
       logger.info("Deleting vertex with id: " + id);
-      const query = 'MATCH (n {id: "' + id + '"}) DELETE n';
+      const query = `MATCH (n${labelClause(labels)} {id: $id}) DETACH DELETE n`;
       logger.debug("Delete vertex query: " + query);
-      const result = await this.driver.executeQuery(query, null);
+      const result = await this.driver.executeQuery(query, { id: id });
       // logger.info(JSON.stringify(result));
       if (result.summary.counters._stats.nodesDeleted == 0) {
         return Promise.resolve(false);
@@ -61,20 +89,21 @@ export class MemGraphDriver extends DatabaseDriver {
     relationLabels: [string],
     sourcePropName: string,
     sourcePropValue: any,
-
     targetPropName: string,
     targetPropValue: any,
-    properties: { [key: string]: any }
+    properties: { [key: string]: any },
+    sourceLabels?: any,
+    targetLabels?: any
   ): Promise<Boolean> {
     const relationLabelString = relationLabels.join(":");
 
     const query = `
-          MATCH (a {${sourcePropName}: "${sourcePropValue}"}), 
-                (b {${targetPropName}: "${targetPropValue}"})
-          CREATE (a)-[r:${relationLabelString}]->(b)
-          SET r += $properties
-          RETURN r;
-            `;
+          MATCH (a${labelClause(sourceLabels)} {${ident(sourcePropName)}: $sourcePropValue}),
+                (b${labelClause(targetLabels)} {${ident(targetPropName)}: $targetPropValue})
+          MERGE (a)-[r${typeClause(relationLabels)} {id: $properties.id}]->(b)
+          SET r = $properties
+          RETURN count(r) AS matched
+    `;
 
     const params = {
       sourcePropName: sourcePropName,
@@ -96,11 +125,11 @@ export class MemGraphDriver extends DatabaseDriver {
     }
   }
 
-  async deleteEdge(id: string): Promise<Boolean> {
-    const query = 'MATCH ()-[r {id: "' + id + '"}]-() DELETE r';
+  async deleteEdge(id: string, relationType?: any): Promise<Boolean> {
+    const query = `MATCH ()-[r${typeClause(relationType)} {id: $id}]->() DELETE r`;
     logger.info("Delete edge query: " + query);
     try {
-      const result = await this.driver.executeQuery(query, null);
+      const result = await this.driver.executeQuery(query, { id: id });
       logger.info(JSON.stringify(result));
       if (result.summary.counters._stats.relationshipsDeleted == 0) {
         return Promise.resolve(false);
@@ -115,19 +144,13 @@ export class MemGraphDriver extends DatabaseDriver {
   async setVertexProperty(
     vid: string,
     key: string,
-    value: string
+    value: string,
+    labels?: any
   ): Promise<Boolean> {
-    const query =
-      'MATCH (n {id: "' +
-      vid +
-      '"}) SET n.' +
-      key +
-      '="' +
-      value +
-      '"  RETURN n;';
+    const query = `MATCH (n${labelClause(labels)} {id: $vid}) SET n.${ident(key)} = $value RETURN count(n) AS matched`;
 
     try {
-      const result = await this.driver.executeQuery(query, null);
+      const result = await this.driver.executeQuery(query, { vid: vid, value: value });
       if (result.records.length === 0) {
         return Promise.resolve(false);
       }
@@ -140,19 +163,13 @@ export class MemGraphDriver extends DatabaseDriver {
   async setEdgeProperty(
     eid: string,
     key: string,
-    value: string
+    value: string,
+    relationType?: any
   ): Promise<Boolean> {
-    const query =
-      'MATCH ()-[r {id: "' +
-      eid +
-      '"}]->() SET r.' +
-      key +
-      '="' +
-      value +
-      '"  RETURN r';
+    const query = `MATCH ()-[r${typeClause(relationType)} {id: $eid}]->() SET r.${ident(key)} = $value RETURN count(r) AS matched`;
 
     try {
-      const result = await this.driver.executeQuery(query, null);
+      const result = await this.driver.executeQuery(query,  { eid: eid, value: value });
       if (result.records && result.records.length === 0) {
         return Promise.resolve(false);
       }
@@ -163,10 +180,10 @@ export class MemGraphDriver extends DatabaseDriver {
     }
   }
 
-  async removeVertexProperty(vid: string, key: string): Promise<Boolean> {
-    const query = 'MATCH (n {id: "' + vid + '"}) REMOVE n.' + key + " RETURN n";
+  async removeVertexProperty(vid: string, key: string, labels?: any): Promise<Boolean> {
+    const query = `MATCH (n${labelClause(labels)} {id: $vid}) REMOVE n.${ident(key)} RETURN count(n) AS matched`;
     try {
-      const result = await this.driver.executeQuery(query, null);
+      const result = await this.driver.executeQuery(query, { vid: vid });
       if (result.records && result.records.length == 0) {
         return Promise.resolve(false);
       }
@@ -177,12 +194,11 @@ export class MemGraphDriver extends DatabaseDriver {
     }
   }
 
-  async removeEdgeProperty(eid: string, key: string): Promise<Boolean> {
-    const query =
-      'MATCH ()-[r {id: "' + eid + '"}]->() REMOVE r.' + key + " RETURN r";
+  async removeEdgeProperty(eid: string, key: string, relationType?: any): Promise<Boolean> {
+    const query = `MATCH ()-[r${typeClause(relationType)} {id: $eid}]->() REMOVE r.${ident(key)} RETURN count(r) AS matched`;
 
     try {
-      const result = await this.driver.executeQuery(query, null);
+      const result = await this.driver.executeQuery(query, { eid: eid });
       if (result.records && result.records.length == 0) {
         return Promise.resolve(false);
       }
