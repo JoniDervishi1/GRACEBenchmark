@@ -209,7 +209,10 @@ def generate_compose_file(i, db_conf, config):
         {db_name}:
           image: memgraph/memgraph:latest
           container_name: {db_name}
-          command: ["--log-level=TRACE"]
+          command: [
+            "--log-level=TRACE", 
+            "--storage-enable-schema-metadata=true"
+            ]
           pull_policy: always
           volumes:
             - {PRELOAD_DATA}:/var/lib/memgraph/import
