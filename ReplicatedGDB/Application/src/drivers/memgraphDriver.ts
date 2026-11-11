@@ -18,21 +18,9 @@ const typeClause = (types?: string[] | string) => {
 
 const toNumber = (v: any): number => (neo4j.isInt(v) ? v.toNumber() : Number(v));
 
-/**
- * Vertices and edges keep the label / edge type they were loaded with (the dataset's xlabel and
- * _label), so every operation that targets an existing element takes that label from the caller
- * (Graph.ts knows it for each id). Putting the label in the pattern lets Memgraph use its
- * label(id) index. If nothing matches with the label, the query is repeated without it, and a
- * warning is logged for the first few times: that means the label Grace holds for the element
- * differs from the one stored in Memgraph, and the fallback is a full scan.
- *
- * The extra label / relationType parameters are typed any on purpose: DatabaseDriver declares these
- * methods with its own parameter lists (e.g. deleteEdge(properties, remote: boolean)), and a typed
- * extra parameter in the same position is rejected as incompatible (TS2416).
- */
+
 export class MemGraphDriver extends DatabaseDriver {
   driver;
-  private labelFallbacks = 0;
 
   constructor() {
     super();
@@ -49,15 +37,6 @@ export class MemGraphDriver extends DatabaseDriver {
     })();
   }
 
-  private warnFallback(what: string, id: string, clause: string) {
-    if (this.labelFallbacks++ < 5) {
-      logger.info(
-        `WARNING: ${what} ${id} not found with ${clause} but found without it. ` +
-          `The label Grace holds differs from the one in Memgraph; this query was a full scan.`
-      );
-    }
-  }
-
   /** Runs a query that ends in "RETURN count(x) AS matched" and returns that number. */
   private async matched(query: string, params: object): Promise<number> {
     const result = await this.driver.executeQuery(query, params);
@@ -65,34 +44,11 @@ export class MemGraphDriver extends DatabaseDriver {
     return rec ? toNumber(rec.get("matched")) : 0;
   }
 
-  /** Runs build(clause); if nothing matched and a clause was used, runs build("") once more. */
-  private async matchedWithFallback(
-    what: string,
-    id: string,
-    clause: string,
-    build: (clause: string) => string,
-    params: object
-  ): Promise<number> {
-    let n = 0;
-    if (clause) {
-      n = await this.matched(build(clause), params);
-    }
-    if (n === 0) {
-      n = await this.matched(build(""), params);
-      if (n > 0 && clause) {
-        this.warnFallback(what, id, clause);
-      }
-    }
-    return n;
-  }
-
   async getGraph() {
     const query = `MATCH (n) RETURN n LIMIT 50`;
-    const params = null;
 
     try {
-      const result = await this.driver.executeQuery(query);
-      return result;
+      return await this.driver.executeQuery(query);
     } catch (err) {
       logger.error(err);
       throw err;
@@ -106,9 +62,8 @@ export class MemGraphDriver extends DatabaseDriver {
       MERGE (n${labelClause(labels)} {id: $properties.id})
       SET n = $properties
     `;
-    const params = { properties: properties };
     try {
-      await this.driver.executeQuery(query, params);
+      await this.driver.executeQuery(query, { properties: properties });
     } catch (err) {
       logger.error("Error in add vertex: " + err);
       throw err;
@@ -116,18 +71,12 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async deleteVertex(id, labels?: any) {
-    const clause = labelClause(labels);
-    const build = (c: string) => `MATCH (n${c} {id: $id}) DETACH DELETE n`;
-    const params = { id: id };
-    const deleted = (r: any) => r?.summary?.counters?.updates?.()?.nodesDeleted;
-
+    const query = `MATCH (n${labelClause(labels)} {id: $id}) DETACH DELETE n`;
     try {
-      let result = await this.driver.executeQuery(build(clause), params);
-      if (clause && deleted(result) === 0) {
-        result = await this.driver.executeQuery(build(""), params);
-        if (deleted(result) > 0) {
-          this.warnFallback("vertex", id, clause);
-        }
+      const result: any = await this.driver.executeQuery(query, { id: id });
+      // Not thrown: a replicated delete of an already deleted vertex must stay a no-op.
+      if (result?.summary?.counters?.updates?.()?.nodesDeleted === 0) {
+        logger.error(`Delete vertex: no vertex with id ${id}${labelClause(labels)} found`);
       }
     } catch (err) {
       logger.error("Error in delete vertex: " + err);
@@ -145,11 +94,9 @@ export class MemGraphDriver extends DatabaseDriver {
     sourceLabels?: any,
     targetLabels?: any
   ) {
-    // MERGE ensures upsert behavior for edges too. The endpoints carry their own labels so the
-    // label(id) index is used.
-    const build = (sc: string, tc: string) => `
-          MATCH (a${sc} {${ident(sourcePropName)}: $sourcePropValue}),
-                (b${tc} {${ident(targetPropName)}: $targetPropValue})
+    const query = `
+          MATCH (a${labelClause(sourceLabels)} {${ident(sourcePropName)}: $sourcePropValue}),
+                (b${labelClause(targetLabels)} {${ident(targetPropName)}: $targetPropValue})
           MERGE (a)-[r${typeClause(relationLabels)} {id: $properties.id}]->(b)
           SET r = $properties
           RETURN count(r) AS matched
@@ -159,22 +106,9 @@ export class MemGraphDriver extends DatabaseDriver {
       targetPropValue: targetPropValue,
       properties: properties,
     };
-    const sc = labelClause(sourceLabels);
-    const tc = labelClause(targetLabels);
 
     try {
-      let n = 0;
-      if (sc || tc) {
-        n = await this.matched(build(sc, tc), params);
-      }
-      if (n === 0) {
-        n = await this.matched(build("", ""), params);
-        if (n > 0 && (sc || tc)) {
-          this.warnFallback("edge endpoints", `${sourcePropValue}->${targetPropValue}`, sc + "/" + tc);
-        }
-      }
-      if (n === 0) {
-        // Before this check a missing endpoint silently created nothing.
+      if ((await this.matched(query, params)) === 0) {
         throw new Error(`Source or target vertex not found for edge ${properties.id}`);
       }
     } catch (err) {
@@ -184,19 +118,12 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async deleteEdge(id: string, relationType?: any) {
-    const clause = typeClause(relationType);
-    const build = (c: string) => `MATCH ()-[r${c} {id: $id}]->() DELETE r`;
-    const params = { id: id };
-    const deleted = (r: any) => r?.summary?.counters?.updates?.()?.relationshipsDeleted;
-
-    logger.info("Delete edge query: " + build(clause));
+    const query = `MATCH ()-[r${typeClause(relationType)} {id: $id}]->() DELETE r`;
     try {
-      let result = await this.driver.executeQuery(build(clause), params);
-      if (clause && deleted(result) === 0) {
-        result = await this.driver.executeQuery(build(""), params);
-        if (deleted(result) > 0) {
-          this.warnFallback("edge", id, clause);
-        }
+      const result: any = await this.driver.executeQuery(query, { id: id });
+      // Not thrown: a replicated delete of an already deleted edge must stay a no-op.
+      if (result?.summary?.counters?.updates?.()?.relationshipsDeleted === 0) {
+        logger.error(`Delete edge: no edge with id ${id}${typeClause(relationType)} found`);
       }
     } catch (err) {
       logger.error("Error in delete edge: " + err);
@@ -205,15 +132,9 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async setVertexProperty(vid: string, key: string, value: string, labels?: any) {
-    const build = (c: string) =>
-      `MATCH (n${c} {id: $vid}) SET n.${ident(key)} = $value RETURN count(n) AS matched`;
-
+    const query = `MATCH (n${labelClause(labels)} {id: $vid}) SET n.${ident(key)} = $value RETURN count(n) AS matched`;
     try {
-      const n = await this.matchedWithFallback("vertex", vid, labelClause(labels), build, {
-        vid: vid,
-        value: value,
-      });
-      if (n === 0) {
+      if ((await this.matched(query, { vid: vid, value: value })) === 0) {
         throw new Error(`Vertex with id ${vid} not found.`);
       }
       logger.info(`Property ${key} set to ${value} for vertex with id ${vid}`);
@@ -224,15 +145,9 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async setEdgeProperty(eid: string, key: string, value: string, relationType?: any) {
-    const build = (c: string) =>
-      `MATCH ()-[r${c} {id: $eid}]->() SET r.${ident(key)} = $value RETURN count(r) AS matched`;
-
+    const query = `MATCH ()-[r${typeClause(relationType)} {id: $eid}]->() SET r.${ident(key)} = $value RETURN count(r) AS matched`;
     try {
-      const n = await this.matchedWithFallback("edge", eid, typeClause(relationType), build, {
-        eid: eid,
-        value: value,
-      });
-      if (n === 0) {
+      if ((await this.matched(query, { eid: eid, value: value })) === 0) {
         throw new Error(`Edge with id ${eid} not found.`);
       }
       logger.info(`Property ${key} set to ${value} for edge with id ${eid}`);
@@ -243,14 +158,9 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async removeVertexProperty(vid: string, key: string, labels?: any) {
-    const build = (c: string) =>
-      `MATCH (n${c} {id: $vid}) REMOVE n.${ident(key)} RETURN count(n) AS matched`;
-
+    const query = `MATCH (n${labelClause(labels)} {id: $vid}) REMOVE n.${ident(key)} RETURN count(n) AS matched`;
     try {
-      const n = await this.matchedWithFallback("vertex", vid, labelClause(labels), build, {
-        vid: vid,
-      });
-      if (n === 0) {
+      if ((await this.matched(query, { vid: vid })) === 0) {
         throw new Error(`Vertex with id ${vid} not found.`);
       }
       logger.info(`Property ${key} removed from vertex with id ${vid}`);
@@ -261,14 +171,9 @@ export class MemGraphDriver extends DatabaseDriver {
   }
 
   async removeEdgeProperty(eid: string, key: string, relationType?: any) {
-    const build = (c: string) =>
-      `MATCH ()-[r${c} {id: $eid}]->() REMOVE r.${ident(key)} RETURN count(r) AS matched`;
-
+    const query = `MATCH ()-[r${typeClause(relationType)} {id: $eid}]->() REMOVE r.${ident(key)} RETURN count(r) AS matched`;
     try {
-      const n = await this.matchedWithFallback("edge", eid, typeClause(relationType), build, {
-        eid: eid,
-      });
-      if (n === 0) {
+      if ((await this.matched(query, { eid: eid })) === 0) {
         throw new Error(`Edge with id ${eid} not found.`);
       }
       logger.info(`Property ${key} removed from edge with id ${eid}`);
