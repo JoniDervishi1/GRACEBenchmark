@@ -407,8 +407,26 @@ public class CoreWorkload extends Workload {
     return ids;
   }
 
+  private static List<String[]> loadPropertySamples(String path) throws WorkloadException {
+    List<String[]> out = new ArrayList<>();
+    try (java.io.BufferedReader br = new java.io.BufferedReader(new java.io.FileReader(path))) {
+      String line;
+      while ((line = br.readLine()) != null) {
+        String[] p = line.split("\t", -1);
+        if (p.length >= 4) out.add(p);
+      }
+    } catch (IOException e) {
+      throw new WorkloadException("Failed to read " + path + ": " + e.getMessage());
+    }
+    if (out.isEmpty()) throw new WorkloadException("No samples in " + path);
+    return out;
+  }
+
   private JsonObjectStreamer vertexStreamer;
   private JsonObjectStreamer edgeStreamer;
+
+  private List<String[]> vertexSamples = new ArrayList<>();   // {id, label, key, value}
+  private List<String[]> edgeSamples = new ArrayList<>();
 
 
   @Override
@@ -422,6 +440,10 @@ public class CoreWorkload extends Workload {
     loadedVertexIds = new ArrayList<>(loadedVertices);
     loadedEdgeIds = new ArrayList<>(loadedEdges);
     edgeLabels = loadEdgeLabels(p.getProperty("edgeLabelsFile", "./Edges.labels.json"));
+
+    vertexSamples = loadPropertySamples(p.getProperty("vertexPropertiesFile", "./Vertices.properties.preload"));
+    edgeSamples   = loadPropertySamples(p.getProperty("edgePropertiesFile",   "./Edges.properties.preload"));
+
     System.out.println("Edge labels: " + edgeLabels);
 
     try{
@@ -561,10 +583,12 @@ public class CoreWorkload extends Workload {
     db.getEdgeLabels();
   }
   public void doTransactionGetVertexWithProperty(DB db) {
-    db.getVertexWithProperty("searchKey", propertyPool.next());
+    String[] s = vertexSamples.get(ThreadLocalRandom.current().nextInt(vertexSamples.size()));
+    db.getVertexWithProperty(s[2], s[3]);
   }
   public void doTransactionGetEdgeWithProperty(DB db) {
-    db.getEdgeWithProperty("searchKey", propertyPool.next());
+    String[] s = edgeSamples.get(ThreadLocalRandom.current().nextInt(edgeSamples.size()));
+    db.getEdgeWithProperty(s[2], s[3]);
   }
   public void doTransactionGetEdgesWithLabel(DB db) {
     db.getEdgesWithLabel(edgeLabels.get(ThreadLocalRandom.current().nextInt(edgeLabels.size())));

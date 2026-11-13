@@ -16,6 +16,10 @@ public class Neo4jDriver implements DatabaseClient {
     return "`" + s.replace("`", "``") + "`";
   }
 
+  private static String strLit(String s) {
+  return "'" + s.replace("\\", "\\\\").replace("'", "\\'") + "'";
+}
+
   @Override
   public void connect(String name, String URI) {
     try {
@@ -85,7 +89,7 @@ public class Neo4jDriver implements DatabaseClient {
   @Override
   public boolean getVertexWithProperty(String key, String value) {
     try {
-      session.run("MATCH (n) WHERE n." + ident(key) + " = $value RETURN n",
+      session.run("MATCH (n {" + ident(key) + ": $value}) RETURN n.id",
           Values.parameters("value", value)).consume();
       return true;
     } catch (Exception e) {
@@ -97,8 +101,7 @@ public class Neo4jDriver implements DatabaseClient {
   @Override
   public boolean getEdgeWithProperty(String key, String value) {
     try {
-      session.run("MATCH ()-[r]->() WHERE r." + ident(key) + " = $value RETURN r",
-          Values.parameters("value", value)).consume();
+      session.run("MATCH ()-[r {" + ident(key) + ": " + strLit(value) + "}]->() RETURN r.id").consume();
       return true;
     } catch (Exception e) {
       System.out.println("Exception in getEdgeWithProperty: " + e.getMessage());
@@ -110,7 +113,7 @@ public class Neo4jDriver implements DatabaseClient {
   @Override
   public boolean getEdgesWithLabel(String label) {
     try {
-      session.run("MATCH ()-[r:" + ident(label) + "]->() RETURN r").consume();
+      session.run("MATCH ()-[r:" + ident(label) + "]->() RETURN r.id").consume();
       return true;
     } catch (Exception e) {
       System.out.println("Exception in getEdgesWithLabel: " + e.getMessage());
